@@ -30,22 +30,18 @@ function main(args=ARGS)
 	o[:seed] > 0 && srand(o[:seed])
 	o[:atype] = eval(parse(o[:atype]))
 
-  # (sentences, tok2int, int2tok) = readdata("cc10.en");
-  # for sentence in sentences
-  #   println("\n", sentence);
-  #   for word in sentence
-  #     print(int2tok[word], " ")
-  #   end
-  # end
-
-  (source_data, source_tok2int, source_int2tok) = readdata("data/test20.DE")
-  (target_data, target_tok2int, target_int2tok) = readdata("data/test20.EN")
+  (source_data, source_tok2int, source_int2tok) = readdata(o[:sourcefiles][1])
+  (target_data, target_tok2int, target_int2tok) = readdata(o[:targetfiles][1])
 
   source_vocab = length(source_int2tok);
   target_vocab = length(target_int2tok);
   model=initmodel(o[:hidden], source_vocab, target_vocab, o[:atype]);
 
-  s2s_train(model, source_data, target_data, o)
+  opts=oparams(model,Adam; lr=o[:lr]);
+  for epoch=1:o[:epochs]
+    trn_loss = s2s_train(model, source_data, target_data, opts, o)
+    println(:epoch, '\t', epoch, '\t', :trn_loss, '\t', trn_loss)
+  end
 
   for sentence in source_data
     s2s_generate(model, sentence, target_int2tok)
@@ -53,18 +49,15 @@ function main(args=ARGS)
 
 end #main
 
-function s2s_train(model, source_data, target_data, o)
-  opts=oparams(model,Adam; lr=o[:lr]);
-  for epoch=1:o[:epochs]
-    loss = 0; sentence_count=0;
-    for (source_sentence, target_sentence) in zip(source_data, target_data)
-      loss += s2s(model, source_sentence, target_sentence);
-      sentence_count+=1;
-      grads = s2sgrad(model, source_sentence, target_sentence)
-      update!(model, grads, opts)
-    end
-    println(loss/sentence_count)
+function s2s_train(model, source_data, target_data, opts, o)
+  loss = 0; sentence_count=0;
+  for (source_sentence, target_sentence) in zip(source_data, target_data)
+    loss += s2s(model, source_sentence, target_sentence);
+    sentence_count+=1;
+    grads = s2sgrad(model, source_sentence, target_sentence)
+    update!(model, grads, opts)
   end
+  return loss/sentence_count
 end
 
 function s2s_generate(model, inputs, target_int2tok)
