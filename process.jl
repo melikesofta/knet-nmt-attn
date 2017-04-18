@@ -1,8 +1,10 @@
-function readdata(file)
+function readdata(file; tok2int=nothing, int2tok=nothing)
     global strings = readlines(file)
-    global tok2int = Dict{AbstractString, Int}()
-    global int2tok = Vector{AbstractString}()
-    push!(int2tok, "</s>");
+    if (tok2int==nothing && int2tok==nothing)
+      tok2int = Dict{AbstractString, Int}()
+      int2tok = Vector{AbstractString}()
+      push!(int2tok, "</s>");
+    end
     #tok2int["</s>"]=1 # We use "</s>"=>1 as the EOS token
     sentences = Vector{Vector{Int}}()
     for line in strings
@@ -14,7 +16,6 @@ function readdata(file)
             end
             push!(s, tok2int[word])
 		    end
-		#push!(s, tok2int["</s>"])
 		push!(sentences, s)
     end
     return sentences, tok2int, int2tok

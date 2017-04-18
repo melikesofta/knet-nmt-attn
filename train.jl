@@ -2,7 +2,7 @@ for p in ("Knet","AutoGrad","ArgParse","Compat")
     Pkg.installed(p) == nothing && Pkg.add(p)
 end
 
-module BiRNNEncoder
+module Attention
 using Knet,AutoGrad,ArgParse,Compat
 #include(Pkg.dir("Knet/src/distributions.jl"))
 include("process.jl");
@@ -10,7 +10,7 @@ include("model.jl");
 
 function main(args=ARGS)
 	s = ArgParseSettings()
-	s.description="Learning to copy sequences"
+	s.description="Learning to translate between languages"
 	s.exc_handler=ArgParse.debug_handler
 	@add_arg_table s begin
 		("--sourcefiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
@@ -33,6 +33,11 @@ function main(args=ARGS)
   (source_data, source_tok2int, source_int2tok) = readdata(o[:sourcefiles][1])
   (target_data, target_tok2int, target_int2tok) = readdata(o[:targetfiles][1])
 
+  if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
+    (source_test_data,) = readdata(o[:sourcefiles][2]; tok2int=source_tok2int, int2tok=source_int2tok)
+    (target_test_data,) = readdata(o[:targetfiles][2]; tok2int=target_tok2int, int2tok=target_int2tok)
+  end
+
   source_vocab = length(source_int2tok);
   target_vocab = length(target_int2tok);
   model=initmodel(o[:hidden], source_vocab, target_vocab, o[:atype]);
@@ -40,13 +45,20 @@ function main(args=ARGS)
   opts=oparams(model,Adam; lr=o[:lr]);
   for epoch=1:o[:epochs]
     trn_loss = s2s_train(model, source_data, target_data, opts, o)
-    println(:epoch, '\t', epoch, '\t', :trn_loss, '\t', trn_loss)
+    if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
+      tst_loss = s2s_test(model, source_test_data, target_test_data)
+      println(:epoch, '\t', epoch, '\t', :trn_loss, '\t', trn_loss, '\t', :tst_loss, '\t', tst_loss)
+    else
+      println(:epoch, '\t', epoch, '\t', :trn_loss, '\t', trn_loss)
+    end
   end
 
-  for sentence in source_data
-    s2s_generate(model, sentence, target_int2tok)
+  if (o[:generate] != nothing)
+    (generate_data,) = readdata(o[:generate]; tok2int=source_tok2int, int2tok=source_int2tok)
+    for sentence in generate_data
+      s2s_generate(model, sentence, target_int2tok)
+    end
   end
-
 end #main
 
 function s2s_train(model, source_data, target_data, opts, o)
@@ -60,24 +72,33 @@ function s2s_train(model, source_data, target_data, opts, o)
   return loss/sentence_count
 end
 
+function s2s_test(model, source_data, target_data)
+  loss = 0; sentence_count=0;
+  for (source_sentence, target_sentence) in zip(source_data, target_data)
+    loss += s2s(model, source_sentence, target_sentence);
+    sentence_count+=1;
+  end
+  return loss/sentence_count
+end
+
 function s2s_generate(model, inputs, target_int2tok)
-    state = s2s_encode(inputs, model)
-    EOS = ones(Int, length(inputs[1]))
-    input = lstm_input(model[:embed2], EOS)
-    preds = []
-    while (length(preds)<50)
-      state = lstm(model[:decode], state, input)
-      pred = state[1] * model[:output][1] .+ model[:output][2]
-      word = target_int2tok[indmax(pred)]
-      word == "</s>" && break
-      push!(preds, word)
-      input = lstm_input(model[:embed2],indmax(pred))
-      input = reshape(input, 1, size(input, 1))
-    end
-    for pred in preds
-      print(pred, " ")
-    end
-    println()
+  (final_forw_state, states) = s2s_encode(inputs, model)
+  EOS = 1 #ones(Int, 1, length(outputs[1]))
+  input = gru_input(model[:embed2], EOS)
+  preds = []
+  state = final_forw_state * model[:sinit]
+  while (length(preds)<50)
+    state, context = s2s_decode(model, state, states, input)
+    pred = predict(model[:output], state, input, context)
+    word = target_int2tok[indmax(pred)]
+    word == "</s>" && break
+    push!(preds, word)
+    input = gru_input(model[:embed2],indmax(pred))
+  end
+  for pred in preds
+    print(pred, " ")
+  end
+  println()
 end
 
 oparams{T<:Number}(::KnetArray{T},otype; o...)=otype(;o...)

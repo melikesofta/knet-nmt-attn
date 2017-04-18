@@ -1,36 +1,40 @@
 function initmodel(H, SV, TV, atype)
-    init(d...)=atype(xavier(d...))
-    model = Dict{Symbol,Any}()
-    model[:state1] = [ init(1,H), init(1,H) ]
-    model[:state2] = [ init(1,H), init(1,H) ]
-    model[:embed1] = init(SV,H)
-    model[:merge] = [ init(H,H), init(H,H), init(1,H), init(1,H) ]
-    model[:encode1] = [ init(2H,4H), init(1,4H) ]
-    model[:encode2] = [ init(2H,4H), init(1,4H) ]
-    model[:embed2] = init(TV,H)
-    model[:decode] = [ init(2H,4H), init(1,4H) ]
-    model[:output] = [ init(H,TV), init(1,TV) ]
-    return model
+  init(d...)=atype(xavier(d...))
+  model = Dict{Symbol,Any}()
+  model[:state1] = init(1,H)
+  model[:state2] = init(1,H)
+  model[:embed1] = init(SV,H)
+  model[:encode1] = [ init(H,H), init(H,H), init(H,H), init(H,H), init(H,H), init(H,H) ]
+  model[:encode2] = [ init(H,H), init(H,H), init(H,H), init(H,H), init(H,H), init(H,H) ]
+  model[:embed2] = init(TV,H)
+  model[:sinit] = init(H,H)
+  model[:attn] = [ init(H,1), init(H,H), init(2H,H) ]
+  model[:decode] = [ init(H, H), init(H, H), init(2H, H), init(H, H),
+  init(H, H), init(2H, H), init(H, H), init(H, H), init(2H, H)]
+  model[:output] = [ init(H,TV), init(H,TV), init(2H,TV) ]
+  return model
 end
 
 function s2s(model, inputs, outputs)
-    state = s2s_encode(inputs, model)
-    EOS = ones(Int, length(outputs[1]))
-    input = lstm_input(model[:embed2], EOS)
-    preds = []
-    sumlogp = 0
+  (final_forw_state, states) = s2s_encode(inputs, model)
+  EOS = 1 #ones(Int, 1, length(outputs[1]))
+  input = gru_input(model[:embed2], EOS)
+  preds = []
+  sumlogp = 0.0;
 
-    for output in outputs
-        state = lstm(model[:decode], state, input)
-        push!(preds, state[1])
-        input = lstm_input(model[:embed2],output)
-        input = reshape(input, 1, size(input, 1))
-    end
-    state = lstm(model[:decode], state, input)
-    push!(preds, state[1])
-    gold = vcat(outputs..., EOS)
-    sumlogp = lstm_output(model[:output], preds, gold)
-    return -sumlogp
+  state = final_forw_state * model[:sinit]
+  for output in outputs
+    state, context = s2s_decode(model, state, states, input)
+    pred = predict(model[:output], state, input, context)
+    push!(preds, pred)
+    input = gru_input(model[:embed2],output)
+  end
+  state, context = s2s_decode(model, state, states, input)
+  pred = predict(model[:output], state, input, context)
+  push!(preds, pred)
+  gold = vcat(outputs..., EOS)
+  sumlogp = gru_output(gold, preds)
+  return -sumlogp
 end
 
 s2sgrad = grad(s2s)
@@ -38,105 +42,92 @@ s2sgrad = grad(s2s)
 function s2s_encode(inputs, model)
   state1 = initstate(inputs[1], model[:state1])
   state2 = initstate(inputs[1], model[:state2])
+  states = []
   for (forw_input, back_input) in zip(inputs, reverse(inputs))
-    forw_input = lstm_input(model[:embed1], forw_input)
-    forw_input = reshape(forw_input, 1, size(forw_input, 1))
-    state1 = lstm(model[:encode1], state1, forw_input)
-
-    back_input = lstm_input(model[:embed1], back_input)
-    back_input = reshape(back_input, 1, size(back_input, 1))
-    state2 = lstm(model[:encode2], state2, back_input)
+    forw_input = gru_input(model[:embed1], forw_input)
+    state1 = gru(model[:encode1], state1, forw_input)
+    back_input = gru_input(model[:embed1], back_input)
+    state2 = gru(model[:encode2], state2, back_input)
+    state_cat = hcat(state1, state2)
+    push!(states, state_cat)
   end
-
-  return [ wbf2(state1[1], state2[1], model[:merge]), wbf2(state1[2], state2[2], model[:merge]) ]
+  return state1, states
 end
 
-function wbf2(x1, x2, params)
-  wb1 = x1 * params[1] .+ params[3]
-  wb2 = x2 * params[2] .+ params[4]
-  return sigm(wb1+wb2)
+function s2s_decode(model, state, states, input)
+  e = []; alpha = [];
+  for j=1:length(states)
+    ej = tanh(state * model[:attn][2] + states[j] * model[:attn][3]) * model[:attn][1]
+    push!(e, ej)
+  end
+  sume = 0.0;
+  for j=1:length(states)
+    sume += sum(exp(e[j]))
+  end
+  for j=1:length(states)
+    push!(alpha, (exp(e[j]) ./ sume))
+  end
+  c = alpha[1] .* states[1]
+  for i=2:length(states)
+    c = c .+ (alpha[i] .* states[i])
+  end
+  state = gru3(model[:decode], state, c, input)
+  return state, c
 end
 
-function lstm_output(param, preds, gold)
-    pred1 = vcat(preds...)
-    pred2 = pred1 * param[1]
-    pred3 = pred2 .+ param[2]
-    sumlogp = logprob(gold, pred3)
-    return sumlogp
+function gru(params, h, input)
+  z = sigm(input * params[1] + h * params[2])
+  r = sigm(input * params[3] + h * params[4])
+  h_candidate = tanh(input * params[5] + (r .* h) * params[6])
+  h = (1-z) .* h + z .* h_candidate
+  return h
 end
 
+function gru3(params, h, c, input)
+  z = sigm(input * params[1] + h * params[2] + c * params[3])
+  r = sigm(input * params[4] + h * params[5] +  c * params[6])
+  s_candidate = tanh(input * params[7] + (r .* h) * params[8] + c * params[9])
+  h = (1-z) .* h + z .* s_candidate
+  return h
+end
+
+function gru_output(gold, preds)
+  pred = vcat(preds...)
+  sumlogp = logprob(gold, pred)
+  return sumlogp
+end
+
+function predict(param, state, input, context)
+  return state * param[1] + input * param[2] + context * param[3]
+end
 
 function logprob(output, ypred)
-    nrows,ncols = size(ypred)
-    index = similar(output)
-    @inbounds for i=1:length(output)
-        index[i] = i + (output[i]-1)*nrows
-    end
-    o1 = logp(ypred,2)
-    o2 = o1[index]
-    o3 = sum(o2)
-    return o3
+  nrows,ncols = size(ypred)
+  index = similar(output)
+  @inbounds for i=1:length(output)
+    index[i] = i + (output[i]-1)*nrows
+  end
+  o1 = logp(ypred,2)
+  o2 = o1[index]
+  o3 = sum(o2)
+  return o3
 end
 
-function lstm_input(param, input)
-    p = param[input,:]
-    return p
+function gru_input(param, input)
+  p = param[input,:]
+  return reshape(p, 1, size(p, 1))
 end
 
-function lstm_input_back(param, input, grads)
-    dparam = zeros(param)
-    dparam[input,:]=grads
-    return dparam
+function gru_input_back(param, input, grads)
+  dparam = zeros(param)
+  dparam[input,:]=grads
+  return dparam
 end
 
-@primitive lstm_input(param,input),grads lstm_input_back(param,input,grads)
-
-function lstm(param, state, input)
-    weight,bias = param
-    hidden,cell = state
-    h       = size(hidden,2)
-    # map(x->println(size(x)), [input,hidden,weight,bias])
-
-    gates   = hcat(input,hidden) * weight .+ bias
-    forget  = sigm(gates[:,1:h])
-    ingate  = sigm(gates[:,1+h:2h])
-    outgate = sigm(gates[:,1+2h:3h])
-    change  = tanh(gates[:,1+3h:4h])
-    cell    = cell .* forget + ingate .* change
-    hidden  = outgate .* tanh(cell)
-    return (hidden,cell)
-end
-
-function predict(param, input)
-    o1 = input * param[1]
-    o2 = o1 .+ param[2]
-    return o2
-end
+@primitive gru_input(param,input),grads gru_input_back(param,input,grads)
 
 function initstate(idx, state0)
-    h,c = state0
-    h = h .+ fill!(similar(AutoGrad.getval(h), length(idx), length(h)), 0)
-    c = c .+ fill!(similar(AutoGrad.getval(c), length(idx), length(c)), 0)
-    return (h,c)
-end
-
-function _s2s(model, inputs, outputs)
-    state = initstate(inputs[1], model[:state0])
-    for input in reverse(inputs)
-        input = model[:embed1][input,:]
-        state = lstm(model[:encode], state, input)
-    end
-    EOS = ones(Int, length(outputs[1]))
-    input = model[:embed2][EOS,:]
-    sumlogp = 0
-    for output in outputs
-        state = lstm(model[:decode], state, input)
-        ypred = predict(model[:output], state[1])
-        sumlogp += logprob(output, ypred)
-        input = model[:embed2][output,:]
-    end
-    state = lstm(model[:decode], state, input)
-    ypred = predict(model[:output], state[1])
-    sumlogp += logprob(EOS, ypred)
-    return -sumlogp
+  h = state0
+  h = h .+ fill!(similar(AutoGrad.getval(h), length(idx), length(h)), 0)
+  return h
 end
