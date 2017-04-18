@@ -2,7 +2,7 @@ for p in ("Knet","AutoGrad","ArgParse","Compat")
     Pkg.installed(p) == nothing && Pkg.add(p)
 end
 
-module SimpleEncDec
+module BiRNNEncoder
 using Knet,AutoGrad,ArgParse,Compat
 #include(Pkg.dir("Knet/src/distributions.jl"))
 include("process.jl");
@@ -61,19 +61,13 @@ function s2s_train(model, source_data, target_data, opts, o)
 end
 
 function s2s_generate(model, inputs, target_int2tok)
-    state = initstate(inputs[1], model[:state0])
-    for input in reverse(inputs)
-      input = lstm_input(model[:embed1], input)
-      input = reshape(input, 1, size(input, 1))
-      state = lstm(model[:encode], state, input)
-    end
+    state = s2s_encode(inputs, model)
     EOS = ones(Int, length(inputs[1]))
     input = lstm_input(model[:embed2], EOS)
     preds = []
     while (length(preds)<50)
       state = lstm(model[:decode], state, input)
       pred = state[1] * model[:output][1] .+ model[:output][2]
-      #print(indmax(pred), " ")
       word = target_int2tok[indmax(pred)]
       word == "</s>" && break
       push!(preds, word)
