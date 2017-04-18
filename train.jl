@@ -2,7 +2,7 @@ for p in ("Knet","AutoGrad","ArgParse","Compat")
     Pkg.installed(p) == nothing && Pkg.add(p)
 end
 
-module CopySeq
+module SimpleEncDec
 using Knet,AutoGrad,ArgParse,Compat
 #include(Pkg.dir("Knet/src/distributions.jl"))
 include("process.jl");
