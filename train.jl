@@ -9,39 +9,65 @@ include("process.jl");
 include("model.jl");
 
 function main(args=ARGS)
-  (sentences, tok2int, int2tok) = readdata("cc10.en");
-  for sentence in sentences
-    println("\n", sentence);
-    for word in sentence
-      print(int2tok[word], " ")
-    end
-  end
+	s = ArgParseSettings()
+	s.description="Learning to copy sequences"
+	s.exc_handler=ArgParse.debug_handler
+	@add_arg_table s begin
+		("--sourcefiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
+    ("--targetfiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
+		("--generate"; help="Generates a translation of the provided file")
+		("--hidden"; arg_type=Int; default=100; help="Sizes of one or more LSTM layers.")
+		("--epochs"; arg_type=Int; default=3; help="Number of epochs for training.")
+		("--batchsize"; arg_type=Int; default=1; help="Number of sequences to train on in parallel.")
+		("--lr"; arg_type=Float64; default=0.01; help="Initial learning rate.")
+		("--seed"; arg_type=Int; default=42; help="Random number seed.")
+		("--atype"; default=(gpu()>=0 ? "KnetArray{Float32}" : "Array{Float32}"); help="array type: Array for cpu, KnetArray for gpu")
+	end
+	println(s.description)
+	isa(args, AbstractString) && (args=split(args))
+	o = parse_args(args, s; as_symbols=true)
+	println("opts=",[(k,v) for (k,v) in o]...)
+	o[:seed] > 0 && srand(o[:seed])
+	o[:atype] = eval(parse(o[:atype]))
 
-  vocab = length(int2tok);
-  hidden = 100;
-  atype=Array{Float32};
-  otype=Adam;
-  model=initmodel(hidden, vocab, atype);
-  opts=oparams(model,otype; lr=0.01);
+  # (sentences, tok2int, int2tok) = readdata("cc10.en");
+  # for sentence in sentences
+  #   println("\n", sentence);
+  #   for word in sentence
+  #     print(int2tok[word], " ")
+  #   end
+  # end
 
-  for epoch=1:50
-    loss = 0; sentence_count=0;
-    for sentence in sentences
-      loss += s2s(model, sentence, sentence);
-      sentence_count+=1;
-      grads = s2sgrad(model, sentence, sentence)
-      update!(model, grads, opts)
-    end
-    println(loss/sentence_count)
-  end
+  (source_data, source_tok2int, source_int2tok) = readdata("data/test20.DE")
+  (target_data, target_tok2int, target_int2tok) = readdata("data/test20.EN")
 
-  for sentence in sentences
-    s2s_generate(model, sentence)
+  source_vocab = length(source_int2tok);
+  target_vocab = length(target_int2tok);
+  model=initmodel(o[:hidden], source_vocab, target_vocab, o[:atype]);
+
+  s2s_train(model, source_data, target_data, o)
+
+  for sentence in source_data
+    s2s_generate(model, sentence, target_int2tok)
   end
 
 end #main
 
-function s2s_generate(model, inputs)
+function s2s_train(model, source_data, target_data, o)
+  opts=oparams(model,Adam; lr=o[:lr]);
+  for epoch=1:o[:epochs]
+    loss = 0; sentence_count=0;
+    for (source_sentence, target_sentence) in zip(source_data, target_data)
+      loss += s2s(model, source_sentence, target_sentence);
+      sentence_count+=1;
+      grads = s2sgrad(model, source_sentence, target_sentence)
+      update!(model, grads, opts)
+    end
+    println(loss/sentence_count)
+  end
+end
+
+function s2s_generate(model, inputs, target_int2tok)
     state = initstate(inputs[1], model[:state0])
     for input in reverse(inputs)
       input = lstm_input(model[:embed1], input)
@@ -55,7 +81,7 @@ function s2s_generate(model, inputs)
       state = lstm(model[:decode], state, input)
       pred = state[1] * model[:output][1] .+ model[:output][2]
       #print(indmax(pred), " ")
-      word = int2tok[indmax(pred)]
+      word = target_int2tok[indmax(pred)]
       word == "</s>" && break
       push!(preds, word)
       input = lstm_input(model[:embed2],indmax(pred))

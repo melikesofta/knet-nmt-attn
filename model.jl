@@ -1,12 +1,12 @@
-function initmodel(H, V, atype)
+function initmodel(H, SV, TV, atype)
     init(d...)=atype(xavier(d...))
     model = Dict{Symbol,Any}()
     model[:state0] = [ init(1,H), init(1,H) ]
-    model[:embed1] = init(V,H)
+    model[:embed1] = init(SV,H)
     model[:encode] = [ init(2H,4H), init(1,4H) ]
-    model[:embed2] = init(V,H)
+    model[:embed2] = init(TV,H)
     model[:decode] = [ init(2H,4H), init(1,4H) ]
-    model[:output] = [ init(H,V), init(1,V) ]
+    model[:output] = [ init(H,TV), init(1,TV) ]
     return model
 end
 
