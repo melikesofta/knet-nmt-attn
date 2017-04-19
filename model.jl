@@ -1,8 +1,8 @@
-function initmodel(H, SV, TV, atype)
+function initmodel(H, BS, SV, TV, atype)
   init(d...)=atype(xavier(d...))
   model = Dict{Symbol,Any}()
-  model[:state1] = init(1,H)
-  model[:state2] = init(1,H)
+  model[:state1] = init(BS,H)
+  model[:state2] = init(BS,H)
   model[:embed1] = init(SV,H)
   model[:encode1] = [ init(H,H), init(H,H), init(H,H), init(H,H), init(H,H), init(H,H) ]
   model[:encode2] = [ init(H,H), init(H,H), init(H,H), init(H,H), init(H,H), init(H,H) ]
@@ -22,7 +22,7 @@ function s2s(model, inputs, outputs)
   preds = []
   sumlogp = 0.0;
 
-  state = final_forw_state * model[:sinit]
+  state = final_forw_state * model[:sinit] # batchSizexhidden
   for output in outputs
     state, context = s2s_decode(model, state, states, input)
     pred = predict(model[:output], state, input, context)
@@ -48,7 +48,7 @@ function s2s_encode(inputs, model)
     state1 = gru(model[:encode1], state1, forw_input)
     back_input = gru_input(model[:embed1], back_input)
     state2 = gru(model[:encode2], state2, back_input)
-    state_cat = hcat(state1, state2)
+    state_cat = hcat(state1, state2) # batchSizex2hidden
     push!(states, state_cat)
   end
   return state1, states
@@ -58,36 +58,40 @@ function s2s_decode(model, state, states, input)
   e = []; alpha = [];
   for j=1:length(states)
     ej = tanh(state * model[:attn][2] + states[j] * model[:attn][3]) * model[:attn][1]
-    push!(e, ej)
+    # ej: batchSizex1
+    push!(e, ej) # TODO: What is more efficient? Pushing or concat?
   end
   sume = 0.0;
   for j=1:length(states)
-    sume += sum(exp(e[j]))
+    sume += exp(e[j]) # batchSizex1
   end
   for j=1:length(states)
-    push!(alpha, (exp(e[j]) ./ sume))
+    push!(alpha, (exp(e[j]) ./ sume)) # batchSizex1
   end
-  c = alpha[1] .* states[1]
+  c = alpha[1] .* states[1] # batchSizex2hidden
   for i=2:length(states)
     c = c .+ (alpha[i] .* states[i])
   end
   state = gru3(model[:decode], state, c, input)
-  return state, c
+  return state, c # batchSizexhidden; batchSizex2hidden
 end
 
 function gru(params, h, input)
-  z = sigm(input * params[1] + h * params[2])
-  r = sigm(input * params[3] + h * params[4])
-  h_candidate = tanh(input * params[5] + (r .* h) * params[6])
+  z = sigm(input * params[1] + h * params[2]) # batchSizexhidden
+  r = sigm(input * params[3] + h * params[4]) # batchSizexhidden
+  h_candidate = tanh(input * params[5] + (r .* h) * params[6]) # batchSizexhidden
   h = (1-z) .* h + z .* h_candidate
-  return h
+  return h #batchSizexhidden
 end
 
 function gru3(params, h, c, input)
-  z = sigm(input * params[1] + h * params[2] + c * params[3])
-  r = sigm(input * params[4] + h * params[5] +  c * params[6])
-  s_candidate = tanh(input * params[7] + (r .* h) * params[8] + c * params[9])
-  h = (1-z) .* h + z .* s_candidate
+  # h: batchSizexhidden; c: batchSizex2hidden; input: batchSizexhidden
+  # model[:decode] = [ init(H, H), init(H, H), init(2H, H), init(H, H),
+  #       init(H, H), init(2H, H), init(H, H), init(H, H), init(2H, H)]
+  z = sigm(input * params[1] + h * params[2] + c * params[3]) # batchSizexhidden
+  r = sigm(input * params[4] + h * params[5] +  c * params[6]) # batchSizexhidden
+  s_candidate = tanh(input * params[7] + (r .* h) * params[8] + c * params[9]) # batchSizexhidden
+  h = (1-z) .* h + z .* s_candidate # batchSizexhidden
   return h
 end
 
@@ -98,7 +102,8 @@ function gru_output(gold, preds)
 end
 
 function predict(param, state, input, context)
-  return state * param[1] + input * param[2] + context * param[3]
+  # model[:output] = [ init(H,TV), init(H,TV), init(2H,TV) ]
+  return state * param[1] + input * param[2] + context * param[3] # batchSizexTV
 end
 
 function logprob(output, ypred)
@@ -113,14 +118,26 @@ function logprob(output, ypred)
   return o3
 end
 
-function gru_input(param, input)
-  p = param[input,:]
-  return reshape(p, 1, size(p, 1))
+function gru_input(param, inputs)
+  # concatenate corresponding embedding vectors for each
+  # word in the batch vertically
+  # resulting matrix is of size batchSizexhidden and holds
+  # the embedding of one word at each row
+  p = reshape(param[inputs[1], :], 1, size(param, 2))
+  for i=2:length(inputs)
+      row = reshape(param[inputs[i], :], 1, size(param, 2))
+      p = vcat(p, row)
+  end
+  return p
 end
 
-function gru_input_back(param, input, grads)
+function gru_input_back(param, inputs, grads)
+  # carry corresponding gradients for each word
+  # to rows in dparam array of size SVxH
   dparam = zeros(param)
-  dparam[input,:]=grads
+  for i=1:length(inputs)
+    dparam[inputs[i], :] = grads[i, :]
+  end
   return dparam
 end
 

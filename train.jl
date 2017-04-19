@@ -16,6 +16,7 @@ function main(args=ARGS)
 		("--sourcefiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
     ("--targetfiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
 		("--generate"; help="Generates a translation of the provided file")
+		("--batchSize"; arg_type=Int; default=1; help="Minibatch size.")
 		("--hidden"; arg_type=Int; default=100; help="Sizes of one or more LSTM layers.")
 		("--epochs"; arg_type=Int; default=3; help="Number of epochs for training.")
 		("--batchsize"; arg_type=Int; default=1; help="Number of sequences to train on in parallel.")
@@ -40,7 +41,7 @@ function main(args=ARGS)
 
   source_vocab = length(source_int2tok);
   target_vocab = length(target_int2tok);
-  model=initmodel(o[:hidden], source_vocab, target_vocab, o[:atype]);
+  model=initmodel(o[:hidden], o[:batchSize], source_vocab, target_vocab, o[:atype]);
 
   opts=oparams(model,Adam; lr=o[:lr]);
   for epoch=1:o[:epochs]
