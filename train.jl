@@ -1,3 +1,5 @@
+# Usage: julia train.jl --sourcefiles path/to/sourcefile --targetfiles path/to/targetfile
+
 for p in ("Knet","AutoGrad","ArgParse","Compat")
     Pkg.installed(p) == nothing && Pkg.add(p)
 end
@@ -16,7 +18,6 @@ function main(args=ARGS)
 		("--sourcefiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
     ("--targetfiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
 		("--generate"; help="Generates a translation of the provided file")
-		("--batchSize"; arg_type=Int; default=1; help="Minibatch size.")
 		("--hidden"; arg_type=Int; default=100; help="Sizes of one or more LSTM layers.")
 		("--epochs"; arg_type=Int; default=3; help="Number of epochs for training.")
 		("--batchsize"; arg_type=Int; default=1; help="Number of sequences to train on in parallel.")
@@ -31,17 +32,17 @@ function main(args=ARGS)
 	o[:seed] > 0 && srand(o[:seed])
 	o[:atype] = eval(parse(o[:atype]))
 
-  (source_data, source_tok2int, source_int2tok) = readdata(o[:sourcefiles][1])
-  (target_data, target_tok2int, target_int2tok) = readdata(o[:targetfiles][1])
+  (source_data, source_tok2int, source_int2tok) = readdata(o[:sourcefiles][1]; batchsize=o[:batchsize])
+  (target_data, target_tok2int, target_int2tok) = readdata(o[:targetfiles][1]; batchsize=o[:batchsize])
 
   if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
-    (source_test_data,) = readdata(o[:sourcefiles][2]; tok2int=source_tok2int, int2tok=source_int2tok)
-    (target_test_data,) = readdata(o[:targetfiles][2]; tok2int=target_tok2int, int2tok=target_int2tok)
+    (source_test_data,) = readdata(o[:sourcefiles][2]; batchsize=o[:batchsize], tok2int=source_tok2int, int2tok=source_int2tok)
+    (target_test_data,) = readdata(o[:targetfiles][2]; batchsize=o[:batchsize], tok2int=target_tok2int, int2tok=target_int2tok)
   end
 
   source_vocab = length(source_int2tok);
   target_vocab = length(target_int2tok);
-  model=initmodel(o[:hidden], o[:batchSize], source_vocab, target_vocab, o[:atype]);
+  model=initmodel(o[:hidden], o[:batchsize], source_vocab, target_vocab, o[:atype]);
 
   opts=oparams(model,Adam; lr=o[:lr]);
   for epoch=1:o[:epochs]
@@ -55,9 +56,9 @@ function main(args=ARGS)
   end
 
   if (o[:generate] != nothing)
-    (generate_data,) = readdata(o[:generate]; tok2int=source_tok2int, int2tok=source_int2tok)
+    (generate_data,) = readdata(o[:generate]; batchsize=1, tok2int=source_tok2int, int2tok=source_int2tok)
     for sentence in generate_data
-      s2s_generate(model, sentence, target_int2tok)
+      s2s_generate(model, sentence, target_int2tok, o[:hidden], o[:atype])
     end
   end
 end #main
@@ -82,9 +83,14 @@ function s2s_test(model, source_data, target_data)
   return loss/sentence_count
 end
 
-function s2s_generate(model, inputs, target_int2tok)
+function s2s_generate(model, inputs, target_int2tok, hidden, atype)
+  init(d...)=atype(xavier(d...))
+  model[:state1] = init(1,hidden)
+  model[:state2] = init(1,hidden)
+
+
   (final_forw_state, states) = s2s_encode(inputs, model)
-  EOS = 1 #ones(Int, 1, length(outputs[1]))
+  EOS = ones(Int, length(inputs[1]))
   input = gru_input(model[:embed2], EOS)
   preds = []
   state = final_forw_state * model[:sinit]
