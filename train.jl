@@ -100,10 +100,11 @@ function s2s_generate(model, inputs, target_int2tok, hidden, atype)
   while (length(preds)<50)
     state, context = s2s_decode(model, state, states, input)
     pred = predict(model[:output], state, input, context)
-    word = target_int2tok[indmax(pred)]
+    ind = indmax(convert(Array{Float32}, pred))
+    word = target_int2tok[ind]
     word == "</s>" && break
     push!(preds, word)
-    input = gru_input(model[:embed2],indmax(pred))
+    input = gru_input(model[:embed2],ind)
   end
   for pred in preds
     print(pred, " ")

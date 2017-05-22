@@ -154,6 +154,6 @@ end
 
 function initstate(idx, state0)
   h = state0
-  h = h .+ fill!(similar(AutoGrad.getval(h), length(idx), size(h,2)), 0)
+  #h = h .+ fill!(similar(AutoGrad.getval(h), length(idx), size(h,2)), 0)
   return h
 end
