@@ -9,9 +9,10 @@ type Data
   batchsize::Int
   seqlen::Int
   sentences::Vector{Vector{Int}}
+  atype::DataType
 end
 
-function Data(file; batchsize=10, tok2int=nothing, int2tok=nothing, seqlen=70)
+function Data(file; batchsize=10, tok2int=nothing, int2tok=nothing, seqlen=70, atype=Array{Float32})
   vocab_exists = (tok2int != nothing)
   if !vocab_exists
     #tok2int["</s>"]=1 # We use "</s>"=>1 as the EOS token
@@ -44,10 +45,10 @@ function Data(file; batchsize=10, tok2int=nothing, int2tok=nothing, seqlen=70)
   for (tok, int) in tok2int
     push!(int2tok, tok) #int2tok[int] = tok
   end
-  Data(tok2int, int2tok, batchsize, seqlen, sentences)
+  Data(tok2int, int2tok, batchsize, seqlen, sentences, atype)
 end
 
-function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, seqlen::Int, vocabsize::Int)
+function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, seqlen::Int, vocabsize::Int, atype::DataType)
   total = length(sentences)
   to = (from + batchsize -1 < total) ? (from + batchsize -1) : total
 
@@ -67,6 +68,8 @@ function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, 
   for s in batchsent
     batch[sind, 1:length(s)] = s
     mask[sind, 1:length(s)] = zeros(1, length(s))
+    batch = convert(atype, batch)
+    mask = convert(atype, mask)
     sind = sind + 1
     if (sind > batchsize)
       for i=1:size(batch, 2)
@@ -91,9 +94,9 @@ end
 function next(s::Data, state)
   (sdict, from, vocabsize) = state
   if from==nothing
-    (item, new_from) = sentenbatch(sdict, 1, s.batchsize, s.seqlen, vocabsize)
+    (item, new_from) = sentenbatch(sdict, 1, s.batchsize, s.seqlen, vocabsize, s.atype)
   else
-    (item, new_from) = sentenbatch(sdict, from, s.batchsize, s.seqlen, vocabsize)
+    (item, new_from) = sentenbatch(sdict, from, s.batchsize, s.seqlen, vocabsize, s.atype)
   end
   from = new_from
   state = (sdict, from, vocabsize)

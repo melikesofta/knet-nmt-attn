@@ -31,16 +31,16 @@ function main(args=ARGS)
 	println("opts=",[(k,v) for (k,v) in o]...)
 	o[:seed] > 0 && srand(o[:seed])
 	o[:atype] = eval(parse(o[:atype]))
-  source_data = Data(o[:sourcefiles][1]; batchsize=o[:batchsize])
+  source_data = Data(o[:sourcefiles][1]; batchsize=o[:batchsize], atype=o[:atype])
   source_tok2int = source_data.tok2int
   source_int2tok = source_data.int2tok
-  target_data = Data(o[:targetfiles][1]; batchsize=o[:batchsize])
+  target_data = Data(o[:targetfiles][1]; batchsize=o[:batchsize], atype=o[:atype])
   target_tok2int = target_data.tok2int
   target_int2tok = target_data.int2tok
 
   if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
-    (source_test_data,) = Data(o[:sourcefiles][2]; batchsize=o[:batchsize], tok2int=source_tok2int, int2tok=source_int2tok)
-    (target_test_data,) = Data(o[:targetfiles][2]; batchsize=o[:batchsize], tok2int=target_tok2int, int2tok=target_int2tok)
+    (source_test_data,) = Data(o[:sourcefiles][2]; batchsize=o[:batchsize], tok2int=source_tok2int, int2tok=source_int2tok, atype=o[:atype])
+    (target_test_data,) = Data(o[:targetfiles][2]; batchsize=o[:batchsize], tok2int=target_tok2int, int2tok=target_int2tok, atype=o[:atype])
   end
 
   source_vocab = length(source_int2tok);
@@ -59,7 +59,7 @@ function main(args=ARGS)
   end
 
   if (o[:generate] != nothing)
-    generate_data = Data(o[:generate]; batchsize=1, tok2int=source_tok2int, int2tok=source_int2tok)
+    generate_data = Data(o[:generate]; batchsize=1, tok2int=source_tok2int, int2tok=source_int2tok, atype=o[:atype])
     for sentence in generate_data
       s2s_generate(model, sentence, target_int2tok, o[:hidden], o[:atype])
     end
