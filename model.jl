@@ -17,19 +17,26 @@ end
 
 function s2s(model, inputs, outputs)
   (final_forw_state, states) = s2s_encode(inputs, model)
-  EOS = ones(Int, length(outputs[1]))
+  EOS = ones(Int, length(outputs[1][1]))
   input = gru_input(model[:embed2], EOS)
   preds = []
   sumlogp = 0.0;
-
   state = final_forw_state * model[:sinit] # batchsizexhidden
-  for output in outputs
-    state, context = s2s_decode(model, state, states, input)
+
+  # masks = inputs[2]
+  # inputs = inputs[1]
+  # for (forw_input, back_input, forw_mask, back_mask) in zip(inputs, reverse(inputs), masks, reverse(masks))
+  masks = outputs[2]
+  outputs = outputs[1]
+  prev_mask=nothing
+  for (output, mask) in zip(outputs, masks)
+    state, context = s2s_decode(model, state, states, input; mask=prev_mask)
     pred = predict(model[:output], state, input, context)
     push!(preds, pred)
     input = gru_input(model[:embed2],output)
+    prev_mask = mask
   end
-  state, context = s2s_decode(model, state, states, input)
+  state, context = s2s_decode(model, state, states, input; mask=prev_mask)
   pred = predict(model[:output], state, input, context)
   push!(preds, pred)
   gold = vcat(outputs..., EOS)
@@ -40,21 +47,23 @@ end
 s2sgrad = grad(s2s)
 
 function s2s_encode(inputs, model)
-  state1 = initstate(inputs[1], model[:state1])
-  state2 = initstate(inputs[1], model[:state2])
+  state1 = initstate(inputs[1][1], model[:state1])
+  state2 = initstate(inputs[1][1], model[:state2])
   states = []
-  for (forw_input, back_input) in zip(inputs, reverse(inputs))
+  masks = inputs[2]
+  inputs = inputs[1]
+  for (forw_input, back_input, forw_mask, back_mask) in zip(inputs, reverse(inputs), masks, reverse(masks))
     forw_input = gru_input(model[:embed1], forw_input)
-    state1 = gru(model[:encode1], state1, forw_input)
+    state1 = gru(model[:encode1], state1, forw_input; mask=forw_mask)
     back_input = gru_input(model[:embed1], back_input)
-    state2 = gru(model[:encode2], state2, back_input)
+    state2 = gru(model[:encode2], state2, back_input; mask=back_mask)
     state_cat = hcat(state1, state2) # batchsizex2hidden
     push!(states, state_cat)
   end
   return state1, states
 end
 
-function s2s_decode(model, state, states, input)
+function s2s_decode(model, state, states, input; mask=nothing)
   e = []; alpha = [];
   for j=1:length(states)
     ej = tanh(state * model[:attn][2] + states[j] * model[:attn][3]) * model[:attn][1]
@@ -72,19 +81,19 @@ function s2s_decode(model, state, states, input)
   for i=2:length(states)
     c = c .+ (alpha[i] .* states[i])
   end
-  state = gru3(model[:decode], state, c, input)
+  state = gru3(model[:decode], state, c, input; mask=mask)
   return state, c # batchsizexhidden; batchsizex2hidden
 end
 
-function gru(params, h, input)
+function gru(params, h, input; mask=nothing)
   z = sigm(input * params[1] + h * params[2]) # batchsizexhidden
   r = sigm(input * params[3] + h * params[4]) # batchsizexhidden
   h_candidate = tanh(input * params[5] + (r .* h) * params[6]) # batchsizexhidden
   h = (1-z) .* h + z .* h_candidate
-  return h #batchsizexhidden
+  return (mask == nothing) ? h : (h .* mask) #batchsizexhidden
 end
 
-function gru3(params, h, c, input)
+function gru3(params, h, c, input; mask=nothing)
   # h: batchsizexhidden; c: batchsizex2hidden; input: batchsizexhidden
   # model[:decode] = [ init(H, H), init(H, H), init(2H, H), init(H, H),
   #       init(H, H), init(2H, H), init(H, H), init(H, H), init(2H, H)]
@@ -92,7 +101,7 @@ function gru3(params, h, c, input)
   r = sigm(input * params[4] + h * params[5] +  c * params[6]) # batchsizexhidden
   s_candidate = tanh(input * params[7] + (r .* h) * params[8] + c * params[9]) # batchsizexhidden
   h = (1-z) .* h + z .* s_candidate # batchsizexhidden
-  return h
+  return (mask == nothing) ? h : (h .* mask)
 end
 
 function gru_output(gold, preds)

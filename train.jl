@@ -31,13 +31,16 @@ function main(args=ARGS)
 	println("opts=",[(k,v) for (k,v) in o]...)
 	o[:seed] > 0 && srand(o[:seed])
 	o[:atype] = eval(parse(o[:atype]))
-
-  (source_data, source_tok2int, source_int2tok) = readdata(o[:sourcefiles][1]; batchsize=o[:batchsize])
-  (target_data, target_tok2int, target_int2tok) = readdata(o[:targetfiles][1]; batchsize=o[:batchsize])
+  source_data = Data(o[:sourcefiles][1]; batchsize=o[:batchsize])
+  source_tok2int = source_data.tok2int
+  source_int2tok = source_data.int2tok
+  target_data = Data(o[:targetfiles][1]; batchsize=o[:batchsize])
+  target_tok2int = target_data.tok2int
+  target_int2tok = target_data.int2tok
 
   if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
-    (source_test_data,) = readdata(o[:sourcefiles][2]; batchsize=o[:batchsize], tok2int=source_tok2int, int2tok=source_int2tok)
-    (target_test_data,) = readdata(o[:targetfiles][2]; batchsize=o[:batchsize], tok2int=target_tok2int, int2tok=target_int2tok)
+    (source_test_data,) = Data(o[:sourcefiles][2]; batchsize=o[:batchsize], tok2int=source_tok2int, int2tok=source_int2tok)
+    (target_test_data,) = Data(o[:targetfiles][2]; batchsize=o[:batchsize], tok2int=target_tok2int, int2tok=target_int2tok)
   end
 
   source_vocab = length(source_int2tok);
@@ -56,7 +59,7 @@ function main(args=ARGS)
   end
 
   if (o[:generate] != nothing)
-    (generate_data,) = readdata(o[:generate]; batchsize=1, tok2int=source_tok2int, int2tok=source_int2tok)
+    generate_data = Data(o[:generate]; batchsize=1, tok2int=source_tok2int, int2tok=source_int2tok)
     for sentence in generate_data
       s2s_generate(model, sentence, target_int2tok, o[:hidden], o[:atype])
     end
@@ -66,6 +69,7 @@ end #main
 function s2s_train(model, source_data, target_data, opts, o)
   loss = 0; sentence_count=0;
   for (source_sentence, target_sentence) in zip(source_data, target_data)
+    (source_sentence == nothing) && break;
     loss += s2s(model, source_sentence, target_sentence);
     sentence_count+=1;
     grads = s2sgrad(model, source_sentence, target_sentence)
@@ -88,9 +92,8 @@ function s2s_generate(model, inputs, target_int2tok, hidden, atype)
   model[:state1] = init(1,hidden)
   model[:state2] = init(1,hidden)
 
-
   (final_forw_state, states) = s2s_encode(inputs, model)
-  EOS = ones(Int, length(inputs[1]))
+  EOS = ones(Int, length(inputs[1][1]))
   input = gru_input(model[:embed2], EOS)
   preds = []
   state = final_forw_state * model[:sinit]
