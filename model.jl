@@ -15,8 +15,8 @@ function initmodel(H, BS, SV, TV, atype)
   return model
 end
 
-function s2s(model, inputs, outputs)
-  (final_forw_state, states) = s2s_encode(inputs, model)
+function s2s(model, inputs, outputs, atype)
+  (final_forw_state, states) = s2s_encode(inputs, model, atype)
   EOS = ones(Int, length(outputs[1][1]))
   input = gru_input(model[:embed2], EOS)
   preds = []
@@ -30,6 +30,7 @@ function s2s(model, inputs, outputs)
   outputs = outputs[1]
   prev_mask=nothing
   for (output, mask) in zip(outputs, masks)
+    mask = convert(atype, mask)
     state, context = s2s_decode(model, state, states, input; mask=prev_mask)
     pred = predict(model[:output], state, input, context)
     push!(preds, pred)
@@ -46,13 +47,15 @@ end
 
 s2sgrad = grad(s2s)
 
-function s2s_encode(inputs, model)
+function s2s_encode(inputs, model, atype)
   state1 = initstate(inputs[1][1], model[:state1])
   state2 = initstate(inputs[1][1], model[:state2])
   states = []
   masks = inputs[2]
   inputs = inputs[1]
   for (forw_input, back_input, forw_mask, back_mask) in zip(inputs, reverse(inputs), masks, reverse(masks))
+    forw_mask = convert(atype, forw_mask)
+    back_mask = convert(atype, back_mask)
     forw_input = gru_input(model[:embed1], forw_input)
     state1 = gru(model[:encode1], state1, forw_input; mask=forw_mask)
     back_input = gru_input(model[:embed1], back_input)

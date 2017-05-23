@@ -70,7 +70,7 @@ function s2s_train(model, source_data, target_data, opts, o)
   loss = 0; sentence_count=0;
   for (source_sentence, target_sentence) in zip(source_data, target_data)
     (source_sentence == nothing) && break;
-    loss += s2s(model, source_sentence, target_sentence);
+    loss += s2s(model, source_sentence, target_sentence, o[:atype]);
     sentence_count+=1;
     grads = s2sgrad(model, source_sentence, target_sentence)
     update!(model, grads, opts)
@@ -81,7 +81,7 @@ end
 function s2s_test(model, source_data, target_data)
   loss = 0; sentence_count=0;
   for (source_sentence, target_sentence) in zip(source_data, target_data)
-    loss += s2s(model, source_sentence, target_sentence);
+    loss += s2s(model, source_sentence, target_sentence, o[:atype]);
     sentence_count+=1;
   end
   return loss/sentence_count
