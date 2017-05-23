@@ -72,7 +72,7 @@ function s2s_train(model, source_data, target_data, opts, o)
     (source_sentence == nothing) && break;
     loss += s2s(model, source_sentence, target_sentence, o[:atype]);
     sentence_count+=1;
-    grads = s2sgrad(model, source_sentence, target_sentence)
+    grads = s2sgrad(model, source_sentence, target_sentence, o[:atype])
     update!(model, grads, opts)
   end
   return loss/sentence_count
