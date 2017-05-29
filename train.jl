@@ -22,6 +22,7 @@ function main(args=ARGS)
 		("--epochs"; arg_type=Int; default=3; help="Number of epochs for training.")
 		("--batchsize"; arg_type=Int; default=1; help="Number of sequences to train on in parallel.")
 		("--lr"; arg_type=Float64; default=0.01; help="Initial learning rate.")
+    ("--gcheck"; arg_type=Int; default=0; help="Check N random gradients.")
 		("--seed"; arg_type=Int; default=42; help="Random number seed.")
 		("--atype"; default=(gpu()>=0 ? "KnetArray{Float32}" : "Array{Float32}"); help="array type: Array for cpu, KnetArray for gpu")
 	end
@@ -72,6 +73,9 @@ function s2s_train(model, source_data, target_data, opts, o)
     (source_sentence == nothing) && break;
     loss += s2s(model, source_sentence, target_sentence, o[:atype]);
     sentence_count+=1;
+    if o[:gcheck] > 0 && sentence_count == 1 #check gradients only for the first batch
+				gradcheck(s2s, model, source_sentence, target_sentence, o[:atype]; gcheck=o[:gcheck])
+    end
     grads = s2sgrad(model, source_sentence, target_sentence, o[:atype])
     update!(model, grads, opts)
   end
