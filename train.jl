@@ -92,7 +92,7 @@ function s2s_generate(model, inputs, target_int2tok, hidden, atype)
   model[:state1] = init(1,hidden)
   model[:state2] = init(1,hidden)
 
-  (final_forw_state, states) = s2s_encode(inputs, model)
+  (final_forw_state, states) = s2s_encode(inputs, model, atype)
   EOS = ones(Int, length(inputs[1][1]))
   input = gru_input(model[:embed2], EOS)
   preds = []

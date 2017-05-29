@@ -61,13 +61,13 @@ function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, 
   batchsent = sentences[from:to]
 
   batch = ones(batchsize, seqlen+1)
-  mask = ones(batchsize, seqlen+1) 
+  mask = zeros(batchsize, seqlen+1) 
   batchvector = Vector{Vector{Int}}()
   maskvector = Vector{Vector{Int}}()
   sind = 1
   for s in batchsent
     batch[sind, 1:length(s)] = s
-    mask[sind, 1:length(s)] = zeros(1, length(s))
+    mask[sind, 1:length(s)] = ones(1, length(s))
     batch = convert(atype, batch)
     mask = convert(atype, mask)
     sind = sind + 1
