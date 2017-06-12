@@ -52,7 +52,6 @@ function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, 
   total = length(sentences)
   to = (from + batchsize -1 < total) ? (from + batchsize -1) : total
 
-  # not to work with surplus sentences ?
   if (to-from + 1 < batchsize)
     return (nothing, 1)
   end
@@ -60,26 +59,40 @@ function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, 
   new_from = (to == total) ? 1 : (to + 1)
   batchsent = sentences[from:to]
 
-  batch = ones(batchsize, seqlen+1)
-  mask = zeros(batchsize, seqlen+1) 
-  batchvector = Vector{Vector{Int}}()
-  maskvector = Vector{Vector{Int}}()
-  sind = 1
-  for s in batchsent
-    batch[sind, 1:length(s)] = s
-    mask[sind, 1:length(s)] = ones(1, length(s))
-    batch = convert(atype, batch)
-    mask = convert(atype, mask)
-    sind = sind + 1
-    if (sind > batchsize)
-      for i=1:size(batch, 2)
-        push!(batchvector, batch[:,i])
-        push!(maskvector, mask[:,i])
-      end
+  critic = findmax(map(length, batchsent))[1]
+
+  data = Vector{Vector{Int32}}(critic+1)
+  data[1] = fill!(zeros(Int32, batchsize), 1)
+  masks = Vector{Vector{Int32}}(critic+1)
+  masks[1] = fill!(zeros(Int32, batchsize), 1)
+
+  for cursor=1:critic+1 # to pad EOW to the end of the word
+        d = Vector{Int32}(batchsize)
+        mask = ones(Int32, batchsize)
+        @inbounds for i=1:batchsize
+            sent = batchsent[i]
+            if length(sent) < critic
+                if length(sent) >= cursor
+                    d[i] = sent[i]
+                elseif length(sent)+1 == cursor
+                    d[i] = 1
+                else
+                    d[i] = 1
+                    mask[i] = 0
+                end
+            else
+                if cursor>critic
+                    d[i] = 1
+                else
+                    d[i] = sent[i]
+                end
+            end
+            data[cursor + 1] = d
+            masks[cursor + 1] = mask
+        end 
     end
-  end
-  data = (batchvector, maskvector)
-  return (data, new_from)
+    data = (data, masks)
+    return data, new_from
 end  
 
 function start(s::Data)
