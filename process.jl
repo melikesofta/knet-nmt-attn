@@ -58,7 +58,6 @@ function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, 
 
   new_from = (to == total) ? 1 : (to + 1)
   batchsent = sentences[from:to]
-
   critic = findmax(map(length, batchsent))[1]
 
   data = Vector{Vector{Int32}}(critic+1)
@@ -73,9 +72,7 @@ function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, 
             sent = batchsent[i]
             if length(sent) < critic
                 if length(sent) >= cursor
-                    d[i] = sent[i]
-                elseif length(sent)+1 == cursor
-                    d[i] = 1
+                    d[i] = sent[cursor]
                 else
                     d[i] = 1
                     mask[i] = 0
@@ -84,7 +81,7 @@ function sentenbatch(sentences::Vector{Vector{Int}}, from::Int, batchsize::Int, 
                 if cursor>critic
                     d[i] = 1
                 else
-                    d[i] = sent[i]
+                    d[i] = sent[cursor]
                 end
             end
             data[cursor + 1] = d
