@@ -39,6 +39,7 @@ function main(args=ARGS)
   target_tok2int = target_data.tok2int
   target_int2tok = target_data.int2tok
 
+  #only works for one set of test files for now
   if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
     (source_test_data,) = Data(o[:sourcefiles][2]; batchsize=o[:batchsize], tok2int=source_tok2int, int2tok=source_int2tok, atype=o[:atype])
     (target_test_data,) = Data(o[:targetfiles][2]; batchsize=o[:batchsize], tok2int=target_tok2int, int2tok=target_int2tok, atype=o[:atype])
@@ -52,7 +53,7 @@ function main(args=ARGS)
   for epoch=1:o[:epochs]
     trn_loss = s2s_train(model, source_data, target_data, opts, o)
     if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
-      tst_loss = s2s_test(model, source_test_data, target_test_data)
+      tst_loss = s2s_test(model, source_test_data, target_test_data, o)
       println(:epoch, '\t', epoch, '\t', :trn_loss, '\t', trn_loss, '\t', :tst_loss, '\t', tst_loss)
     else
       println(:epoch, '\t', epoch, '\t', :trn_loss, '\t', trn_loss)
@@ -82,9 +83,10 @@ function s2s_train(model, source_data, target_data, opts, o)
   return loss/sentence_count
 end
 
-function s2s_test(model, source_data, target_data)
+function s2s_test(model, source_data, target_data, o)
   loss = 0; sentence_count=0;
   for (source_sentence, target_sentence) in zip(source_data, target_data)
+    (source_sentence == nothing) && break;
     loss += s2s(model, source_sentence, target_sentence, o[:atype]);
     sentence_count+=1;
   end
