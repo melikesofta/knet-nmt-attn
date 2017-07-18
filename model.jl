@@ -22,10 +22,7 @@ function s2s(model, inputs, outputs, atype)
   preds = []
   sumlogp = 0.0;
   state = final_forw_state * model[:sinit] # batchsizexhidden
-
-  # masks = inputs[2]
-  # inputs = inputs[1]
-  # for (forw_input, back_input, forw_mask, back_mask) in zip(inputs, reverse(inputs), masks, reverse(masks))
+  
   masks = outputs[2]
   outputs = outputs[1]
   prev_mask=nothing
@@ -42,7 +39,7 @@ function s2s(model, inputs, outputs, atype)
   push!(preds, pred)
   gold = vcat(outputs..., EOS)
   sumlogp = gru_output(gold, preds)
-  return -sumlogp/length(inputs[1])
+  return -sumlogp
 end
 
 s2sgrad = grad(s2s)
