@@ -17,7 +17,8 @@ function main(args=ARGS)
 		("--sourcefiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
     ("--targetfiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
 		("--generate"; help="Generates a translation of the provided file")
-		("--hidden"; arg_type=Int; default=100; help="Sizes of one or more LSTM layers.")
+    ("--hidden"; arg_type=Int; default=1000; help="Sizes of one or more LSTM layers.")
+    ("--embedding"; arg_type=Int; default=620; help="Sizes of one or more LSTM layers.")
 		("--epochs"; arg_type=Int; default=3; help="Number of epochs for training.")
 		("--batchsize"; arg_type=Int; default=1; help="Number of sequences to train on in parallel.")
 		("--lr"; arg_type=Float64; default=0.01; help="Initial learning rate.")
@@ -46,7 +47,7 @@ function main(args=ARGS)
 
   source_vocab = length(source_int2tok);
   target_vocab = length(target_int2tok);
-  model=initmodel(o[:hidden], o[:batchsize], source_vocab, target_vocab, o[:atype]);
+  model=initmodel(o[:hidden], o[:batchsize], o[:embedding], source_vocab, target_vocab, o[:atype]);
 
   init_trn_loss = s2s_test(model, source_data, target_data, o);
   if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
@@ -102,22 +103,27 @@ end
 
 function s2s_generate(model, inputs, target_int2tok, hidden, atype)
   init(d...)=atype(xavier(d...))
-  model[:state1] = init(1,hidden)
-  model[:state2] = init(1,hidden)
+  model[:forw_state] = init(1,hidden)
+  model[:back_state] = init(1,hidden)
+  (final_forw_state, states) = s2s_encode(model, inputs, atype)
+  
+  EOS = ones(Int, 1)
+  input = embed(model[:dec_embed], EOS)
 
-  (final_forw_state, states) = s2s_encode(inputs, model, atype)
-  EOS = ones(Int, length(inputs[1][1]))
-  input = gru_input(model[:embed2], EOS)
-  preds = []
-  state = final_forw_state * model[:sinit]
+  state = final_forw_state * model[:sinit] .+ model[:sinit_bias] # batchsizexhidden
+  prev_mask = nothing
+
+  enc_effect = map(state -> state * model[:attn][3] .+ model[:attn_bias][3], states)
+  preds=[];
+  
   while (length(preds)<50)
-    state, context = s2s_decode(model, state, states, input)
-    pred = predict(model[:output], state, input, context)
+    state, context = s2s_decode(model, state, states, input, enc_effect; mask=nothing)
+    pred = predict(model[:output], model[:output_bias], state, input, context; mask=nothing)
     ind = indmax(convert(Array{Float32}, pred))
     word = target_int2tok[ind]
     word == "</s>" && break
     push!(preds, word)
-    input = gru_input(model[:embed2],ind)
+    input = embed(model[:dec_embed], ind)
   end
   for pred in preds
     print(pred, " ")

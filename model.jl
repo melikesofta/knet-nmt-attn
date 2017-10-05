@@ -1,107 +1,140 @@
-function initmodel(H, BS, SV, TV, atype)
+function initmodel(H, BS, E, SV, TV, atype)
   init(d...)=atype(xavier(d...))
   model = Dict{Symbol,Any}()
-  model[:state1] = init(BS,H)
-  model[:state2] = init(BS,H)
-  model[:embed1] = init(SV,H)
-  model[:encode1] = [ init(H,H), init(H,H), init(H,H), init(H,H), init(H,H), init(H,H) ]
-  model[:encode2] = [ init(H,H), init(H,H), init(H,H), init(H,H), init(H,H), init(H,H) ]
-  model[:embed2] = init(TV,H)
+  model[:forw_state] = init(BS,H)
+  model[:back_state] = init(BS,H)
+
+  model[:enc_embed] = init(SV,E)
+
+  model[:forw_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
+  model[:forw_encode_bias] = [ init(1,H), init(1,H), init(1,H), init(1,H), init(1,H), init(1,H) ]
+
+  model[:back_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
+  model[:back_encode_bias] = [ init(1,H), init(1,H), init(1,H), init(1,H), init(1,H), init(1,H) ]
+
+  model[:dec_embed] = init(TV,E)
+
   model[:sinit] = init(H,H)
+  model[:sinit_bias] = init(1,H)
+
   model[:attn] = [ init(H,1), init(H,H), init(2H,H) ]
-  model[:decode] = [ init(H, H), init(H, H), init(2H, H), init(H, H),
-  init(H, H), init(2H, H), init(H, H), init(H, H), init(2H, H)]
-  model[:output] = [ init(H,TV), init(H,TV), init(2H,TV) ]
+  model[:attn_bias] = [ init(1,1), init(1,H), init(1,H) ]
+
+  model[:decode] = [ init(E, H), init(H, H), init(2H, H), init(E, H),
+  init(H, H), init(2H, H), init(E, H), init(H, H), init(2H, H)]
+  model[:decode_bias] = [ init(1, H), init(1, H), init(1, H), init(1, H),
+  init(1, H), init(1, H), init(1, H), init(1, H), init(1, H)]
+
+  model[:output] = [ init(H,TV), init(E,TV), init(2H,TV) ]
+  model[:output_bias] = [ init(1,TV), init(1,TV), init(1,TV) ]
   return model
 end
 
 function s2s(model, inputs, outputs, atype)
-  (final_forw_state, states) = s2s_encode(inputs, model, atype)
-  EOS = ones(Int, length(outputs[1][1]))
-  input = gru_input(model[:embed2], EOS)
-  preds = []
-  sumlogp = 0.0;
-  state = final_forw_state * model[:sinit] # batchsizexhidden
-  
-  masks = outputs[2]
-  outputs = outputs[1]
-  prev_mask=nothing
+  batchsize = size(inputs[1][1], 1)
+  (final_forw_state, states) = s2s_encode(model, inputs, atype)
+
+  EOS = ones(Int, batchsize)
+  input = embed(model[:dec_embed], EOS)
+
+  state = final_forw_state * model[:sinit] .+ model[:sinit_bias] # batchsizexhidden
+  prev_mask = nothing
+
+  enc_effect = map(state -> state * model[:attn][3] .+ model[:attn_bias][3], states)
+  preds=[];
+  (outputs, masks) = outputs
   for (output, mask) in zip(outputs, masks)
-    mask = convert(atype, mask)
-    state, context = s2s_decode(model, state, states, input; mask=prev_mask)
-    pred = predict(model[:output], state, input, context)
-    push!(preds, pred)
-    input = gru_input(model[:embed2],output)
-    prev_mask = mask
+      prev_mask = prev_mask == nothing ? prev_mask : atype(prev_mask)
+      state, context = s2s_decode(model, state, states, input, enc_effect; mask=prev_mask)
+      pred = predict(model[:output], model[:output_bias], state, input, context; mask=prev_mask)
+      push!(preds, pred)
+      input = embed(model[:dec_embed], output)
+      prev_mask = mask
   end
-  state, context = s2s_decode(model, state, states, input; mask=prev_mask)
-  pred = predict(model[:output], state, input, context)
+  prev_mask = prev_mask == nothing ? prev_mask : atype(prev_mask)
+  state, context = s2s_decode(model, state, states, input, enc_effect; mask=prev_mask)
+  pred = predict(model[:output], model[:output_bias], state, input, context; mask=prev_mask)
   push!(preds, pred)
   gold = vcat(outputs..., EOS)
   sumlogp = gru_output(gold, preds)
-  return -sumlogp
+  return -sumlogp/batchsize
 end
 
 s2sgrad = grad(s2s)
 
-function s2s_encode(inputs, model, atype)
-  state1 = initstate(inputs[1][1], model[:state1])
-  state2 = initstate(inputs[1][1], model[:state2])
-  states = []
-  masks = inputs[2]
-  inputs = inputs[1]
-  for (forw_input, back_input, forw_mask, back_mask) in zip(inputs, reverse(inputs), masks, reverse(masks))
-    forw_mask = convert(atype, forw_mask)
-    back_mask = convert(atype, back_mask)
-    forw_input = gru_input(model[:embed1], forw_input)
-    state1 = gru(model[:encode1], state1, forw_input; mask=forw_mask)
-    back_input = gru_input(model[:embed1], back_input)
-    state2 = gru(model[:encode2], state2, back_input; mask=back_mask)
-    state_cat = hcat(state1, state2) # batchsizex2hidden
-    push!(states, state_cat)
+function embed(param, inputs)
+  emb = reshape(param[inputs[1], :], 1, size(param, 2))
+  for i=2:length(inputs)
+      embi = reshape(param[inputs[i], :], 1, size(param, 2))
+      emb = vcat(emb, embi)
   end
-  return state1, states
+  return emb
 end
 
-function s2s_decode(model, state, states, input; mask=nothing)
-  e = []; alpha = [];
-  for j=1:length(states)
-    ej = tanh(state * model[:attn][2] + states[j] * model[:attn][3]) * model[:attn][1]
-    # ej: batchsizex1
-    push!(e, ej) # TODO: What is more efficient? Pushing or concat?
+function gru(weights, bias, h, input; mask=nothing)
+  zi = sigm(input * weights[1] .+ bias[1] + h * weights[2] .+ bias[2])
+  r = sigm(input * weights[3] .+ bias[3] + h * weights[4] .+ bias[4])
+  h_candidate = tanh(input * weights[5] .+ bias[5] + (r .* h) * weights[6] .+ bias[6])
+  h = (1 - zi) .* h + zi .* h_candidate
+  return (mask == nothing) ? h : (h .* mask) # batchsizexhidden
+end
+
+function gru3(weights, bias, h, c, input; mask=nothing)
+  zi = sigm(input * weights[1] .+ bias[1] + h * weights[2] .+ bias[2] + c * weights[3] .+ bias[3])
+  r = sigm(input * weights[4] .+ bias[4] + h * weights[5] .+ bias[5] + c * weights[6] .+ bias[6])
+  s_candidate = tanh(input * weights[7] .+ bias[7] + (r .* h) * weights[8] .+ bias[8] + c * weights[9] .+ bias[9])
+  h = (1-zi) .* h + zi .* s_candidate #batchsizexhidden
+  return (mask==nothing) ? h : (h .* mask)
+end
+
+function s2s_encode(model, inputs, atype)
+  forw_state = initstate(inputs[1][1], model[:forw_state])
+  back_state = initstate(inputs[1][1], model[:back_state])
+  states = []
+  (sentence, mask) = inputs
+  for (forw_word, back_word, forw_mask, back_mask) in zip(sentence, reverse(sentence), mask, reverse(mask))
+      forw_word = embed(model[:enc_embed], forw_word)
+      back_word = embed(model[:enc_embed], back_word)
+      forw_state = gru(model[:forw_encode], model[:forw_encode_bias], forw_state, forw_word; mask=atype(forw_mask))
+      back_state = gru(model[:back_encode], model[:back_encode_bias], back_state, back_word; mask=atype(back_mask))
+      push!(states, hcat(forw_state, back_state))
   end
-  sume = 0.0;
-  for j=1:length(states)
-    sume += exp(e[j]) # batchsizex1
-  end
-  for j=1:length(states)
-    push!(alpha, (exp(e[j]) ./ sume)) # batchsizex1
-  end
-  c = alpha[1] .* states[1] # batchsizex2hidden
-  for i=2:length(states)
-    c = c .+ (alpha[i] .* states[i])
-  end
-  state = gru3(model[:decode], state, c, input; mask=mask)
+  return forw_state, states
+end
+
+function s2s_decode(model, state, states, input, enc_effect; mask=nothing)
+  e = map(enc_e -> tanh(state * model[:attn][2] .+ model[:attn_bias][2] + enc_e) * model[:attn][1] .+ model[:attn_bias][1], enc_effect)
+  expe = map(ej -> exp(ej), e)
+  sume = reduce(+, 0, expe)
+  alpha = map(expej -> expej ./ sume, expe)
+  alpst = map((a, s) -> a .* s, alpha, states)
+  c = reduce(+, 0, alpst)
+  state = gru3(model[:decode], model[:decode_bias], state, c, input; mask=mask)
   return state, c # batchsizexhidden; batchsizex2hidden
 end
 
-function gru(params, h, input; mask=nothing)
-  z = sigm(input * params[1] + h * params[2]) # batchsizexhidden
-  r = sigm(input * params[3] + h * params[4]) # batchsizexhidden
-  h_candidate = tanh(input * params[5] + (r .* h) * params[6]) # batchsizexhidden
-  h = (1-z) .* h + z .* h_candidate
-  return (mask == nothing) ? h : (h .* mask) #batchsizexhidden
+function predict(weights, bias, state, input, context; mask=nothing)
+  pred = state * weights[1] .+ bias[1] + input * weights[2] .+ bias[2] + context * weights[3] .+ bias[3]
+  if mask != nothing
+      masked_pred = reshape(pred[1, :] .* mask[1], 1, size(pred[1,:], 1))
+      for i=2:length(mask)
+          new_pred = reshape(pred[i, :] .* mask[i], 1, size(pred[i,:], 1))
+          masked_pred = vcat(masked_pred, new_pred)
+      end
+  end
+  return mask == nothing ? pred : masked_pred
 end
 
-function gru3(params, h, c, input; mask=nothing)
-  # h: batchsizexhidden; c: batchsizex2hidden; input: batchsizexhidden
-  # model[:decode] = [ init(H, H), init(H, H), init(2H, H), init(H, H),
-  #       init(H, H), init(2H, H), init(H, H), init(H, H), init(2H, H)]
-  z = sigm(input * params[1] + h * params[2] + c * params[3]) # batchsizexhidden
-  r = sigm(input * params[4] + h * params[5] +  c * params[6]) # batchsizexhidden
-  s_candidate = tanh(input * params[7] + (r .* h) * params[8] + c * params[9]) # batchsizexhidden
-  h = (1-z) .* h + z .* s_candidate # batchsizexhidden
-  return (mask == nothing) ? h : (h .* mask)
+function logprob(output, ypred)
+  nrows,ncols = size(ypred)
+  index = similar(output)
+  @inbounds for i=1:length(output)
+      index[i] = i + (output[i]-1)*nrows
+  end
+  o1 = logp(ypred,2)
+  o2 = o1[index]
+  o3 = sum(o2)
+  return o3
 end
 
 function gru_output(gold, preds)
@@ -110,50 +143,6 @@ function gru_output(gold, preds)
   return sumlogp
 end
 
-function predict(param, state, input, context)
-  # model[:output] = [ init(H,TV), init(H,TV), init(2H,TV) ]
-  return state * param[1] + input * param[2] + context * param[3] # batchsizexTV
-end
-
-function logprob(output, ypred)
-  nrows,ncols = size(ypred)
-  index = similar(output)
-  @inbounds for i=1:length(output)
-    index[i] = i + (output[i]-1)*nrows
-  end
-  o1 = logp(ypred,2)
-  o2 = o1[index]
-  o3 = sum(o2)
-  return o3
-end
-
-function gru_input(param, inputs)
-  # concatenate corresponding embedding vectors for each
-  # word in the batch vertically
-  # resulting matrix is of size batchsizexhidden and holds
-  # the embedding of one word at each row
-  p = reshape(param[inputs[1], :], 1, size(param, 2))
-  for i=2:length(inputs)
-      row = reshape(param[inputs[i], :], 1, size(param, 2))
-      p = vcat(p, row)
-  end
-  return p
-end
-
-function gru_input_back(param, inputs, grads)
-  # carry corresponding gradients for each word
-  # to rows in dparam array of size SVxH
-  dparam = zeros(param)
-  for i=1:length(inputs)
-    dparam[inputs[i], :] = grads[i, :]
-  end
-  return dparam
-end
-
-@primitive gru_input(param,input),grads gru_input_back(param,input,grads)
-
 function initstate(idx, state0)
   h = state0
-  #h = h .+ fill!(similar(AutoGrad.getval(h), length(idx), size(h,2)), 0)
-  return h
 end
