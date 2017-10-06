@@ -16,7 +16,8 @@ function main(args=ARGS)
 	@add_arg_table s begin
 		("--sourcefiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
     ("--targetfiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
-		("--generate"; help="Generates a translation of the provided file")
+    ("--generate"; help="Generates a translation of the provided file")
+    ("--generatedfile"; help="Path for the file for the translation to be written")
     ("--hidden"; arg_type=Int; default=1000; help="Sizes of one or more LSTM layers.")
     ("--embedding"; arg_type=Int; default=620; help="Sizes of one or more LSTM layers.")
 		("--epochs"; arg_type=Int; default=3; help="Number of epochs for training.")
@@ -70,9 +71,16 @@ function main(args=ARGS)
 
   if (o[:generate] != nothing)
     generate_data = Data(o[:generate]; batchsize=1, tok2int=source_tok2int, int2tok=source_int2tok)
+    first_sentence = true
+    file = open(o[:generatedfile], "a") # append mode
     for sentence in generate_data
-      s2s_generate(model, sentence, target_int2tok, o[:hidden], o[:atype])
+      if !first_sentence
+        write(file, "\n")
+      end
+      s2s_generate(model, sentence, target_int2tok, o[:hidden], o[:atype], file)
+      first_sentence = false
     end
+    close(file)
   end
 end #main
 
@@ -101,7 +109,7 @@ function s2s_test(model, source_data, target_data, o)
   return loss/sentence_count
 end
 
-function s2s_generate(model, inputs, target_int2tok, hidden, atype)
+function s2s_generate(model, inputs, target_int2tok, hidden, atype, generatedfile)
   init(d...)=atype(xavier(d...))
   model[:forw_state] = init(1,hidden)
   model[:back_state] = init(1,hidden)
@@ -114,21 +122,21 @@ function s2s_generate(model, inputs, target_int2tok, hidden, atype)
   prev_mask = nothing
 
   enc_effect = map(state -> state * model[:attn][3] .+ model[:attn_bias][3], states)
-  preds=[];
   
-  while (length(preds)<50)
+  cnt = 1
+  while (cnt<50)
     state, context = s2s_decode(model, state, states, input, enc_effect; mask=nothing)
     pred = predict(model[:output], model[:output_bias], state, input, context; mask=nothing)
     ind = indmax(convert(Array{Float32}, pred))
     word = target_int2tok[ind]
     word == "</s>" && break
-    push!(preds, word)
+    if cnt!=1
+      write(generatedfile, " ")
+    end
+    write(generatedfile, word)
+    cnt += 1
     input = embed(model[:dec_embed], ind)
   end
-  for pred in preds
-    print(pred, " ")
-  end
-  println()
 end
 
 oparams{T<:Number}(::KnetArray{T},otype; o...)=otype(;o...)
