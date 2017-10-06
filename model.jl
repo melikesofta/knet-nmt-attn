@@ -1,5 +1,6 @@
 function initmodel(H, BS, E, SV, TV, atype)
   init(d...)=atype(xavier(d...))
+  bias(d...)=atype(zeros(d...))
   model = Dict{Symbol,Any}()
   model[:forw_state] = init(BS,H)
   model[:back_state] = init(BS,H)
@@ -7,26 +8,26 @@ function initmodel(H, BS, E, SV, TV, atype)
   model[:enc_embed] = init(SV,E)
 
   model[:forw_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
-  model[:forw_encode_bias] = [ init(1,H), init(1,H), init(1,H), init(1,H), init(1,H), init(1,H) ]
+  model[:forw_encode_bias] = [ bias(1,H), bias(1,H), bias(1,H), bias(1,H), bias(1,H), bias(1,H) ]
 
   model[:back_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
-  model[:back_encode_bias] = [ init(1,H), init(1,H), init(1,H), init(1,H), init(1,H), init(1,H) ]
+  model[:back_encode_bias] = [ bias(1,H), bias(1,H), bias(1,H), bias(1,H), bias(1,H), bias(1,H) ]
 
   model[:dec_embed] = init(TV,E)
 
   model[:sinit] = init(H,H)
-  model[:sinit_bias] = init(1,H)
+  model[:sinit_bias] = bias(1,H)
 
   model[:attn] = [ init(H,1), init(H,H), init(2H,H) ]
-  model[:attn_bias] = [ init(1,1), init(1,H), init(1,H) ]
+  model[:attn_bias] = [ bias(1,1), bias(1,H), bias(1,H) ]
 
   model[:decode] = [ init(E, H), init(H, H), init(2H, H), init(E, H),
   init(H, H), init(2H, H), init(E, H), init(H, H), init(2H, H)]
-  model[:decode_bias] = [ init(1, H), init(1, H), init(1, H), init(1, H),
-  init(1, H), init(1, H), init(1, H), init(1, H), init(1, H)]
+  model[:decode_bias] = [ bias(1, H), bias(1, H), bias(1, H), bias(1, H),
+  bias(1, H), bias(1, H), bias(1, H), bias(1, H), bias(1, H)]
 
   model[:output] = [ init(H,TV), init(E,TV), init(2H,TV) ]
-  model[:output_bias] = [ init(1,TV), init(1,TV), init(1,TV) ]
+  model[:output_bias] = [ bias(1,TV), bias(1,TV), bias(1,TV) ]
   return model
 end
 
