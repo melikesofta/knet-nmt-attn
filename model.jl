@@ -26,7 +26,7 @@ function initmodel(H, BS, E, SV, TV, atype)
   model[:decode_bias] = [ bias(1, H), bias(1, H), bias(1, H) ]
 
   model[:output] = [ init(H,TV), init(E,TV), init(2H,TV) ]
-  model[:output_bias] = [ bias(1,TV), bias(1,TV), bias(1,TV) ]
+  model[:output_bias] = [ bias(1,TV) ]
   return model
 end
 
@@ -107,14 +107,14 @@ function s2s_decode(model, state, states, input, enc_effect; mask=nothing)
   expe = map(ej -> exp(ej), e)
   sume = reduce(+, 0, expe)
   alpha = map(expej -> expej ./ sume, expe)
-  alpst = map((a, s) -> a * s, alpha, states)
+  alpst = map((a, s) -> a .* s, alpha, states)
   c = reduce(+, 0, alpst)
   state = gru3(model[:decode], model[:decode_bias], state, c, input; mask=mask)
   return state, c # batchsizexhidden; batchsizex2hidden
 end
 
 function predict(weights, bias, state, input, context; mask=nothing)
-  pred = state * weights[1] .+ bias[1] + input * weights[2] .+ bias[2] + context * weights[3] .+ bias[3]
+  pred = state * weights[1] + input * weights[2] + context * weights[3] .+ bias[1]
   if mask != nothing
       masked_pred = reshape(pred[1, :] .* mask[1], 1, size(pred[1,:], 1))
       for i=2:length(mask)

@@ -162,7 +162,7 @@ function s2s_generate(model, inputs, target_int2tok, hidden, atype, generatedfil
   state = final_forw_state * model[:sinit] .+ model[:sinit_bias] # batchsizexhidden
   prev_mask = nothing
 
-  enc_effect = map(state -> state * model[:attn][3] .+ model[:attn_bias][3], states)
+  enc_effect = map(hj -> hj * model[:attn][3], states)
   
   cnt = 1
   while (cnt<50)
