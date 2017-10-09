@@ -8,10 +8,10 @@ function initmodel(H, BS, E, SV, TV, atype)
   model[:enc_embed] = init(SV,E)
 
   model[:forw_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
-  model[:forw_encode_bias] = [ bias(1,H), bias(1,H), bias(1,H), bias(1,H), bias(1,H), bias(1,H) ]
+  model[:forw_encode_bias] = [ bias(1,H), bias(1,H), bias(1,H) ]
 
   model[:back_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
-  model[:back_encode_bias] = [ bias(1,H), bias(1,H), bias(1,H), bias(1,H), bias(1,H), bias(1,H) ]
+  model[:back_encode_bias] = [ bias(1,H), bias(1,H), bias(1,H) ]
 
   model[:dec_embed] = init(TV,E)
 
@@ -19,12 +19,11 @@ function initmodel(H, BS, E, SV, TV, atype)
   model[:sinit_bias] = bias(1,H)
 
   model[:attn] = [ init(H,1), init(H,H), init(2H,H) ]
-  model[:attn_bias] = [ bias(1,1), bias(1,H), bias(1,H) ]
+  model[:attn_bias] = [ bias(1,1), bias(1,H) ]
 
   model[:decode] = [ init(E, H), init(H, H), init(2H, H), init(E, H),
   init(H, H), init(2H, H), init(E, H), init(H, H), init(2H, H)]
-  model[:decode_bias] = [ bias(1, H), bias(1, H), bias(1, H), bias(1, H),
-  bias(1, H), bias(1, H), bias(1, H), bias(1, H), bias(1, H)]
+  model[:decode_bias] = [ bias(1, H), bias(1, H), bias(1, H) ]
 
   model[:output] = [ init(H,TV), init(E,TV), init(2H,TV) ]
   model[:output_bias] = [ bias(1,TV), bias(1,TV), bias(1,TV) ]
@@ -33,15 +32,15 @@ end
 
 function s2s(model, inputs, outputs, atype)
   batchsize = size(inputs[1][1], 1)
-  (final_forw_state, states) = s2s_encode(model, inputs, atype)
+  (final_back_state, states) = s2s_encode(model, inputs, atype)
 
   EOS = ones(Int, batchsize)
   input = embed(model[:dec_embed], EOS)
 
-  state = final_forw_state * model[:sinit] .+ model[:sinit_bias] # batchsizexhidden
+  state = tanh(final_back_state * model[:sinit] .+ model[:sinit_bias]) # batchsizexhidden
   prev_mask = nothing
 
-  enc_effect = map(state -> state * model[:attn][3] .+ model[:attn_bias][3], states)
+  enc_effect = map(hj -> hj * model[:attn][3], states)
   preds=[];
   (outputs, masks) = outputs
   for (output, mask) in zip(outputs, masks)
@@ -73,17 +72,17 @@ function embed(param, inputs)
 end
 
 function gru(weights, bias, h, input; mask=nothing)
-  zi = sigm(input * weights[1] .+ bias[1] + h * weights[2] .+ bias[2])
-  r = sigm(input * weights[3] .+ bias[3] + h * weights[4] .+ bias[4])
-  h_candidate = tanh(input * weights[5] .+ bias[5] + (r .* h) * weights[6] .+ bias[6])
+  zi = sigm(input * weights[1] + h * weights[2] .+ bias[1])
+  r = sigm(input * weights[3] + h * weights[4] .+ bias[2])
+  h_candidate = tanh(input * weights[5] + (r .* h) * weights[6] .+ bias[3])
   h = (1 - zi) .* h + zi .* h_candidate
   return (mask == nothing) ? h : (h .* mask) # batchsizexhidden
 end
 
 function gru3(weights, bias, h, c, input; mask=nothing)
-  zi = sigm(input * weights[1] .+ bias[1] + h * weights[2] .+ bias[2] + c * weights[3] .+ bias[3])
-  r = sigm(input * weights[4] .+ bias[4] + h * weights[5] .+ bias[5] + c * weights[6] .+ bias[6])
-  s_candidate = tanh(input * weights[7] .+ bias[7] + (r .* h) * weights[8] .+ bias[8] + c * weights[9] .+ bias[9])
+  zi = sigm(input * weights[1] + h * weights[2] + c * weights[3] .+ bias[1])
+  r = sigm(input * weights[4] + h * weights[5] + c * weights[6] .+ bias[2])
+  s_candidate = tanh(input * weights[7] + (r .* h) * weights[8] + c * weights[9] .+ bias[3])
   h = (1-zi) .* h + zi .* s_candidate #batchsizexhidden
   return (mask==nothing) ? h : (h .* mask)
 end
@@ -100,7 +99,7 @@ function s2s_encode(model, inputs, atype)
       back_state = gru(model[:back_encode], model[:back_encode_bias], back_state, back_word; mask=atype(back_mask))
       push!(states, hcat(forw_state, back_state))
   end
-  return forw_state, states
+  return back_state, states
 end
 
 function s2s_decode(model, state, states, input, enc_effect; mask=nothing)
@@ -108,7 +107,7 @@ function s2s_decode(model, state, states, input, enc_effect; mask=nothing)
   expe = map(ej -> exp(ej), e)
   sume = reduce(+, 0, expe)
   alpha = map(expej -> expej ./ sume, expe)
-  alpst = map((a, s) -> a .* s, alpha, states)
+  alpst = map((a, s) -> a * s, alpha, states)
   c = reduce(+, 0, alpst)
   state = gru3(model[:decode], model[:decode_bias], state, c, input; mask=mask)
   return state, c # batchsizexhidden; batchsizex2hidden
