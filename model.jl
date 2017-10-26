@@ -37,7 +37,7 @@ function s2s(model, inputs, outputs, atype)
   EOS = ones(Int, batchsize)
   input = embed(model[:dec_embed], EOS)
 
-  state = tanh(final_back_state * model[:sinit] .+ model[:sinit_bias]) # batchsizexhidden
+  state = final_back_state * model[:sinit] .+ model[:sinit_bias] # batchsizexhidden
   prev_mask = nothing
 
   enc_effect = map(hj -> hj * model[:attn][3], states)
