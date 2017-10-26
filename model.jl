@@ -71,6 +71,17 @@ function embed(param, inputs)
   return emb
 end
 
+function embed_back(param, input, grads) # defined for mb 1
+  dparam = zeros(param)
+  dparam = zeros(param)
+  for i=1:length(input)
+    dparam[input[i], :] = grads[i, :]
+  end
+  return dparam
+end
+
+@primitive embed(param,input),grads embed_back(param,input,grads)
+
 function gru(weights, bias, h, input; mask=nothing)
   zi = sigm(input * weights[1] + h * weights[2] .+ bias[1])
   r = sigm(input * weights[3] + h * weights[4] .+ bias[2])

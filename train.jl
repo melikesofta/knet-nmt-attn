@@ -82,7 +82,7 @@ function main(args=ARGS)
     println("epoch\t0\ttrn_loss\t", init_trn_loss)
   end
 
-  opts=oparams(model,Adam; lr=o[:lr]);
+  opts=oparams(model,Adagrad;);
   for epoch=1:o[:epochs]
     trn_loss = s2s_train(model, source_data, target_data, opts, o)
     if (length(o[:sourcefiles]) > 1 && length(o[:targetfiles]) > 1)
@@ -151,9 +151,6 @@ function s2s_test(model, source_data, target_data, o)
 end
 
 function s2s_generate(model, inputs, target_int2tok, hidden, atype, generatedfile)
-  init(d...)=atype(xavier(d...))
-  model[:forw_state] = init(1,hidden)
-  model[:back_state] = init(1,hidden)
   (final_forw_state, states) = s2s_encode(model, inputs, atype)
   
   EOS = ones(Int, 1)
