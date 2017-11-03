@@ -150,33 +150,6 @@ function s2s_test(model, source_data, target_data, o)
   return loss/sentence_count
 end
 
-function s2s_generate(model, inputs, target_int2tok, hidden, atype, generatedfile)
-  (final_forw_state, states) = s2s_encode(model, inputs, atype)
-  
-  EOS = ones(Int, 1)
-  input = embed(model[:dec_embed], EOS)
-
-  state = final_forw_state * model[:sinit] .+ model[:sinit_bias] # batchsizexhidden
-  prev_mask = nothing
-
-  enc_effect = map(hj -> hj * model[:attn][3], states)
-  
-  cnt = 1
-  while (cnt<50)
-    state, context = s2s_decode(model, state, states, input, enc_effect; mask=nothing)
-    pred = predict(model[:output], model[:output_bias], state, input, context; mask=nothing)
-    ind = indmax(convert(Array{Float32}, pred))
-    word = target_int2tok[ind]
-    word == "</s>" && break
-    if cnt!=1
-      write(generatedfile, " ")
-    end
-    write(generatedfile, word)
-    cnt += 1
-    input = embed(model[:dec_embed], ind)
-  end
-end
-
 oparams{T<:Number}(::KnetArray{T},otype; o...)=otype(;o...)
 oparams{T<:Number}(::Array{T},otype; o...)=otype(;o...)
 oparams(a::Associative,otype; o...)=Dict(k=>oparams(v,otype;o...) for (k,v) in a)
