@@ -2,9 +2,6 @@ function initmodel(H, BS, E, SV, TV, atype)
   init(d...)=atype(xavier(d...))
   bias(d...)=atype(zeros(d...))
   model = Dict{Symbol,Any}()
-  model[:forw_state] = init(BS,H)
-  model[:back_state] = init(BS,H)
-
   model[:enc_embed] = init(SV,E)
 
   model[:forw_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
@@ -30,9 +27,9 @@ function initmodel(H, BS, E, SV, TV, atype)
   return model
 end
 
-function s2s(model, inputs, outputs, atype)
+function s2s(model, inputs, outputs, atype; hidden=nothing)
   batchsize = size(inputs[1][1], 1)
-  (final_back_state, states) = s2s_encode(model, inputs, atype)
+  (final_back_state, states) = s2s_encode(model, inputs, atype; batchsize=batchsize, hidden=hidden)
 
   EOS = ones(Int, batchsize)
   input = embed(model[:dec_embed], EOS)
@@ -98,9 +95,10 @@ function gru3(weights, bias, h, c, input; mask=nothing)
   return (mask==nothing) ? h : (h .* mask)
 end
 
-function s2s_encode(model, inputs, atype)
-  forw_state = initstate(inputs[1][1], model[:forw_state])
-  back_state = initstate(inputs[1][1], model[:back_state])
+function s2s_encode(model, inputs, atype; batchsize=nothing, hidden=nothing)
+  init(d...)=atype(xavier(d...))
+  forw_state = init(batchsize,hidden)
+  back_state = init(batchsize,hidden)
   states = []
   (sentence, mask) = inputs
   for (forw_word, back_word, forw_mask, back_mask) in zip(sentence, reverse(sentence), mask, reverse(mask))
@@ -159,11 +157,7 @@ function initstate(idx, state0)
 end
 
 function s2s_generate(model, inputs, target_int2tok, hidden, atype, generatedfile)
-  init(d...)=atype(xavier(d...))
-  model[:forw_state] = init(1,hidden)
-  model[:back_state] = init(1,hidden)
-  
-  (final_forw_state, states) = s2s_encode(model, inputs, atype)
+  (final_forw_state, states) = s2s_encode(model, inputs, atype; batchsize=1, hidden=hidden)
   
   EOS = ones(Int, 1)
   input = embed(model[:dec_embed], EOS)

@@ -129,12 +129,12 @@ function s2s_train(model, source_data, target_data, opts, o)
   loss = 0; sentence_count=0;
   for (source_sentence, target_sentence) in zip(source_data, target_data)
     (source_sentence == nothing) && break;
-    loss += s2s(model, source_sentence, target_sentence, o[:atype]);
+    loss += s2s(model, source_sentence, target_sentence, o[:atype]; hidden=o[:hidden]);
     sentence_count+=1;
     if o[:gcheck] > 0 && sentence_count == 1 #check gradients only for the first batch
-				gradcheck(s2s, model, source_sentence, target_sentence, o[:atype]; gcheck=o[:gcheck])
+				gradcheck(s2s, model, source_sentence, target_sentence, o[:atype]; gcheck=o[:gcheck], hidden=o[:hidden])
     end
-    grads = s2sgrad(model, source_sentence, target_sentence, o[:atype])
+    grads = s2sgrad(model, source_sentence, target_sentence, o[:atype]; hidden=o[:hidden])
     update!(model, grads, opts)
   end
   return loss/sentence_count
@@ -144,7 +144,7 @@ function s2s_test(model, source_data, target_data, o)
   loss = 0; sentence_count=0;
   for (source_sentence, target_sentence) in zip(source_data, target_data)
     (source_sentence == nothing) && break;
-    loss += s2s(model, source_sentence, target_sentence, o[:atype]);
+    loss += s2s(model, source_sentence, target_sentence, o[:atype]; hidden=o[:hidden]);
     sentence_count+=1;
   end
   return loss/sentence_count
