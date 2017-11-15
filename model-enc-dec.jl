@@ -1,0 +1,163 @@
+# simple encoder-decoder model without attention
+
+function initmodel(H, BS, E, SV, TV, atype)
+  init(d...)=atype(xavier(d...))
+  bias(d...)=atype(zeros(d...))
+  model = Dict{Symbol,Any}()
+  model[:enc_embed] = init(SV,E)
+
+  model[:forw_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
+  model[:forw_encode_bias] = [ bias(1,H), bias(1,H), bias(1,H) ]
+
+  model[:back_encode] = [ init(E,H), init(H,H), init(E,H), init(H,H), init(E,H), init(H,H) ]
+  model[:back_encode_bias] = [ bias(1,H), bias(1,H), bias(1,H) ]
+
+  model[:dec_embed] = init(TV,E)
+
+  model[:sinit] = [ init(H,H), init(H,H) ]
+  model[:sinit_bias] = bias(1,H)
+
+  model[:decode] = [ init(E, H), init(H, H), init(E, H), init(H, H), init(E, H), init(H, H)]
+  model[:decode_bias] = [ bias(1, H), bias(1, H), bias(1, H) ]
+
+  model[:output] = [ init(H,TV), init(E,TV) ]
+  model[:output_bias] = [ bias(1,TV) ]
+  return model
+end
+
+function s2s(model, inputs, outputs, atype; hidden=nothing)
+  batchsize = size(inputs[1][1], 1)
+  (final_forw_state, final_back_state) = s2s_encode(model, inputs, atype; batchsize=batchsize, hidden=hidden)
+
+  EOS = ones(Int, batchsize)
+  input = embed(model[:dec_embed], EOS)
+
+  state = final_forw_state * model[:sinit][1] .+ final_back_state * model[:sinit][2] .+ model[:sinit_bias] # batchsizexhidden
+  prev_mask = nothing
+
+  preds=[];
+  (outputs, masks) = outputs
+  for (output, mask) in zip(outputs, masks)
+      prev_mask = prev_mask == nothing ? prev_mask : atype(prev_mask)
+      state = s2s_decode(model, state, input; mask=prev_mask)
+      pred = predict(model[:output], model[:output_bias], state, input; mask=prev_mask)
+      push!(preds, pred)
+      input = embed(model[:dec_embed], output)
+      prev_mask = mask
+  end
+  prev_mask = prev_mask == nothing ? prev_mask : atype(prev_mask)
+  state = s2s_decode(model, state, input; mask=prev_mask)
+  pred = predict(model[:output], model[:output_bias], state, input; mask=prev_mask)
+  push!(preds, pred)
+  gold = vcat(outputs..., EOS)
+  sumlogp = gru_output(gold, preds)
+  return -sumlogp/batchsize
+end
+
+s2sgrad = grad(s2s)
+
+function embed(param, inputs)
+  emb = reshape(param[inputs[1], :], 1, size(param, 2))
+  for i=2:length(inputs)
+      embi = reshape(param[inputs[i], :], 1, size(param, 2))
+      emb = vcat(emb, embi)
+  end
+  return emb
+end
+
+function embed_back(param, input, grads) # defined for mb 1
+  dparam = zeros(param)
+  dparam = zeros(param)
+  for i=1:length(input)
+    dparam[input[i], :] = grads[i, :]
+  end
+  return dparam
+end
+
+@primitive embed(param,input),grads embed_back(param,input,grads)
+
+function gru(weights, bias, h, input; mask=nothing)
+  zi = sigm(input * weights[1] + h * weights[2] .+ bias[1])
+  r = sigm(input * weights[3] + h * weights[4] .+ bias[2])
+  h_candidate = tanh(input * weights[5] + (r .* h) * weights[6] .+ bias[3])
+  h = (1 - zi) .* h + zi .* h_candidate
+  return (mask == nothing) ? h : (h .* mask) # batchsizexhidden
+end
+
+function s2s_encode(model, inputs, atype; batchsize=nothing, hidden=nothing)
+  init(d...)=atype(xavier(d...))
+  forw_state = init(batchsize,hidden)
+  back_state = init(batchsize,hidden)
+  (sentence, mask) = inputs
+  for (forw_word, back_word, forw_mask, back_mask) in zip(sentence, reverse(sentence), mask, reverse(mask))
+      forw_word = embed(model[:enc_embed], forw_word)
+      back_word = embed(model[:enc_embed], back_word)
+      forw_state = gru(model[:forw_encode], model[:forw_encode_bias], forw_state, forw_word; mask=atype(forw_mask))
+      back_state = gru(model[:back_encode], model[:back_encode_bias], back_state, back_word; mask=atype(back_mask))
+  end
+  return forw_state, back_state
+end
+
+function s2s_decode(model, state, input; mask=nothing)
+  state = gru(model[:decode], model[:decode_bias], state, input; mask=mask)
+  return state # batchsizexhidden; batchsizex2hidden
+end
+
+function predict(weights, bias, state, input; mask=nothing)
+  pred = state * weights[1] + input * weights[2] .+ bias[1]
+  if mask != nothing
+      masked_pred = reshape(pred[1, :] .* mask[1], 1, size(pred[1,:], 1))
+      for i=2:length(mask)
+          new_pred = reshape(pred[i, :] .* mask[i], 1, size(pred[i,:], 1))
+          masked_pred = vcat(masked_pred, new_pred)
+      end
+  end
+  return mask == nothing ? pred : masked_pred
+end
+
+function logprob(output, ypred)
+  nrows,ncols = size(ypred)
+  index = similar(output)
+  @inbounds for i=1:length(output)
+      index[i] = i + (output[i]-1)*nrows
+  end
+  o1 = logp(ypred,2)
+  o2 = o1[index]
+  o3 = sum(o2)
+  return o3
+end
+
+function gru_output(gold, preds)
+  pred = vcat(preds...)
+  sumlogp = logprob(gold, pred)
+  return sumlogp
+end
+
+function initstate(idx, state0)
+  h = state0
+end
+
+function s2s_generate(model, inputs, target_int2tok, hidden, atype, generatedfile)
+  (final_forw_state, final_back_state) = s2s_encode(model, inputs, atype; batchsize=1, hidden=hidden)
+  
+  EOS = ones(Int, 1)
+  input = embed(model[:dec_embed], EOS)
+
+  state = final_forw_state * model[:sinit][1] .+ final_back_state * model[:sinit][2] .+ model[:sinit_bias] # batchsizexhidden
+  prev_mask = nothing
+  
+  cnt = 1
+  while (cnt<50)
+    state = s2s_decode(model, state, input; mask=nothing)
+    pred = predict(model[:output], model[:output_bias], state, input; mask=nothing)
+    ind = indmax(convert(Array{Float32}, pred))
+    word = target_int2tok[ind]
+    word == "</s>" && break
+    if cnt!=1
+      write(generatedfile, " ")
+    end
+    write(generatedfile, word)
+    cnt += 1
+    input = embed(model[:dec_embed], ind)
+  end
+end
